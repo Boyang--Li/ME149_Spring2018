@@ -1,19 +1,28 @@
-function pp = ppSpline2a(tGrid, xGrid, dxGrid)
-% pp = ppSpline2a(tGrid, xGrid, dxGrid)
+function pp = ppSpline3a(tGrid, xGrid, dxGrid)
+% pp = ppSpline3a(tGrid, xGrid, dxGrid)
 %
 % This function computes a matlab pp-form (piecewise-polynomial) spline
-% that is quadratic between knot points. Each segment is constructed using
-% the slope at each boundary and the value at the lower boundary:
+% that is cubic between knot points. Each segment is constructed using
+% the value of the function at the lower boundary and the slope at both
+% boundaries and the slope at the midpoint
 %
-% [xLow, dxLow, dxUpp]  -->  coeff
+% [xLow, dxLow, dxMid, dxUpp]  -->  coeff
 %
 % INPUTS:
-%   tGrid = [1, nGrid] = vector of knot points
-%   xGrid = [nDim, nGrid] = value at each knot point
-%   dxGrid = [nDim, nGrid] = slope at each knot point
+%   tGrid = [1, 2*nSeg + 1] = vector of grid points
+%   xGrid = [nDim, 2*nSeg + 1] = value at each grid point
+%   dxGrid = [nDim, 2*nSeg + 1] = slope at each grid point
 %
 % OUTPUTS:
-%   pp = Matlab pp-form spline that quadratically interpolates the data
+%   pp = Matlab pp-form spline that is a cubic interpolant of the data
+%
+% NOTES:
+%   IMPORTANT: tGrid is assumed to be of the form:
+%       tGrid(k) = 0.5 * (tGrid(k-1), tGrid(k+1));
+%       In other words, elements 1, 3, 5, ... represent the knot points
+%       for the spline, while 2, 4, 6, ... represent the midpoints, which
+%       are assumed to be exactly at the middle of each pair of knot
+%       points.
 %
 % REFERENCES:
 %   
@@ -26,75 +35,89 @@ function pp = ppSpline2a(tGrid, xGrid, dxGrid)
 %
 
 % Run a unit test if called with no arguments
-if nargin == 0, ppSpline2a_test(); return; end
+if nargin == 0, ppSpline3a_test(); return; end
 
 % Check input size:
 [nDim, nGrid] = size(xGrid);
+if mod(nGrid, 2) ~= 1
+   error('Invalid input: nGrid must be odd!  (nGrid = 2*nSeg+1)');   
+end
+if nGrid < 3
+   error('Invalid input: nGrid >= 3 is required!   (nGrid = 2*nSeg+1)');
+end
 [oneCheck, nGridCheck] = size(tGrid);
 if oneCheck ~= 1 || nGridCheck ~= nGrid
     error('Invalid input: tGrid must be size [%d, %d]', 1, nGrid);
 end
-[nDimCheck, nGridCheck] = size(dxGrid);
-if nDimCheck ~= nDim || nGridCheck ~= nGrid
-    error('Invalid input: dxGrid must be size [%d, %d]', nDim, nGrid);
-end
 
 % Size of the coefficient data structure
-nCoeff = 3;  % x = C0 + C1 * t + C2 * t^2
-nSeg = nGrid - 1 ; % number of spline segments
+nSeg = (nGrid - 1)/2;  % number of spline segments
+nCoeff = 4;  % x = C0 + C1 * t + C2 * t^2 + C3 * t^3
 nRows = nDim * nSeg; % number of rows in pp.coeffs
+iKnot = 1:2:nGrid; % Indices corresponding to knot points
 
 % Initialize the pp-form data structure
 pp.form = 'pp';
-pp.breaks = tGrid;
+pp.breaks = tGrid(iKnot);
 pp.coefs = zeros(nRows, nCoeff);
 pp.pieces = nSeg;
 pp.order = nCoeff;
 pp.dim = nDim;
 
 % Subsets of xGrid, useful for vectorization
-xLow = xGrid(:, 1:(end-1));
-dxLow = dxGrid(:, 1:(end-1));
-dxUpp = dxGrid(:, 2:end);
+iUpp = iKnot(2:end);
+iMid = iUpp - 1;
+iLow = iMid - 1;
+xLow = xGrid(:, iLow);
+dxLow = dxGrid(:, iLow);
+dxMid = dxGrid(:, iMid);
+dxUpp = dxGrid(:, iUpp);
 
 % Compute the constant term:
 C0 = reshape(xLow, nRows, 1);
 
 % Compute the linear term:
+h = ones(nDim, 1) * diff(tGrid(iKnot));
 C1 = reshape(dxLow, nRows, 1);
 
 % Compute the quadratic term:
-h = ones(nDim, 1) * diff(tGrid);
-C2 = reshape(0.5*(dxUpp - dxLow)./h, nRows, 1);
+hInv = 1.0 ./ h;
+C2 = reshape(-0.5*hInv.*(3*dxLow - 4*dxMid + dxUpp), nRows, 1);
+
+% Compute the cubic term:
+hInv2 = hInv .* hInv;
+C3 = reshape((2.0/3.0)*hInv2.*(dxLow - 2*dxMid + dxUpp), nRows, 1);
 
 % Pack up the coefficients:
-pp.coefs(:, 1) = C2;
-pp.coefs(:, 2) = C1;
-pp.coefs(:, 3) = C0;
+pp.coefs(:, 1) = C3;
+pp.coefs(:, 2) = C2;
+pp.coefs(:, 3) = C1;
+pp.coefs(:, 4) = C0;
 
 end
 
 %~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~%
 
-function ppSpline2a_test()
+function ppSpline3a_test()
 %
 % This function performs a quick unit test to make sure that ppSpline1
 % is performing as expected. It also demonstrates how to use this function.
 %
 
 % Create a sample data set
-nGrid = 15;  % number of grid points
+nSeg = 6;
+nGrid = 2*nSeg + 1;
 tGrid = linspace(0, 1, nGrid);
 xGrid = [sin(5 * tGrid); cos(8 * tGrid); 2 * tGrid.^2 - tGrid];
 dxGrid = [5*cos(5 * tGrid); -8*sin(8 * tGrid); 4 * tGrid - 1];
 nDim = size(xGrid, 1);
 
 % Compute the pp-spline:
-ppx = ppSpline2a(tGrid, xGrid, dxGrid);
+ppx = ppSpline3a(tGrid, xGrid, dxGrid);
 ppdx = ppDer(ppx);
 
 % Interpolate the spline:
-t = linspace(tGrid(1), tGrid(end), 250);
+t = linspace(tGrid(1), tGrid(end), 400);
 x = ppval(ppx, t);
 dx = ppval(ppdx, t);
 
